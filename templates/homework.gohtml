@@ -1,0 +1,42 @@
+<h1>{{.PageTitle}}</h1>
+<h2>General Errors</h2>
+<ul>
+    {{range .Errors}}
+    <li>
+        <h3>{{.Name}}</h3>
+        <p>{{.Details}}</p>
+    </li>
+    {{end}}
+</ul>
+<h2>Tasks</h2>
+{{range .Tasks}}
+
+<h3>{{.Name}}</h3>
+
+{{if .PassingBuild}}
+<p>Build PASSING</p>
+{{else}}
+<p>Build failing</p>
+{{end}}
+
+<ul>
+    {{range .Errors}}
+    <li>
+        <h3>{{.Name}}</h3>
+        <p>{{escapeNewLineHTML .Details}}</p>
+    </li>
+    {{end}}
+</ul>
+
+<ul>
+    {{range .Tests}}
+        {{if .PassingBuild}}
+            <p>Test pass</p>
+        {{else}}
+            <p>Test fail</p>
+        {{end}}
+    {{end}}
+</ul>
+
+
+{{end}}
