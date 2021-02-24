@@ -14,9 +14,14 @@ import (
 	"sort"
 	"strings"
 	"text/template"
+	"time"
+
+	"github.com/gorilla/mux"
+	"github.com/joshdk/go-junit"
 )
 
 const uploadDir = "uploads"
+const buildScriptName = "build.sh"
 
 func retrieveFile(request *http.Request) (string, string, error) {
 	fmt.Println("Uploading file...")
@@ -47,7 +52,6 @@ func retrieveFile(request *http.Request) (string, string, error) {
 	}
 
 	archiveFile.Write(uploadedBytes)
-	fmt.Println("Successfully uploaded", tempDir+"/"+fileName)
 
 	return tempDir, fileName, nil
 }
@@ -58,12 +62,19 @@ type Error struct {
 	Details string
 }
 
+// TestResult TODO
+type TestResult struct {
+	Name    string
+	Passing bool
+	Err     string
+}
+
 // Task TODO
 type Task struct {
 	Name         string
 	PassingBuild bool
 	Errors       []Error
-	Tests        []bool
+	Tests        []TestResult
 }
 
 // Response TODO
@@ -75,15 +86,11 @@ type Response struct {
 
 func uploadFile(w http.ResponseWriter, r *http.Request) {
 	response := Response{"File name error", nil, nil}
+	problemSetID := mux.Vars(r)["problemset"]
+
 	defer func() {
-		tmpl, err := template.New("homework.html").Funcs(template.FuncMap{"escapeNewLineHTML": escapeNewLineHTML}).ParseFiles("templates/homework.html")
-		if err != nil {
-			log.Fatal(err)
-		}
-		err = tmpl.Execute(w, response)
-		if err != nil {
-			log.Fatal(err)
-		}
+		tmpl, _ := template.New("homework.gohtml").Funcs(template.FuncMap{"escapeNewLineHTML": escapeNewLineHTML}).ParseFiles("templates/homework.gohtml")
+		tmpl.Execute(w, response)
 	}()
 
 	tempDir, fileName, err := retrieveFile(r)
@@ -92,7 +99,7 @@ func uploadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response.PageTitle = fileName
-	defer os.RemoveAll(tempDir)
+	// defer os.RemoveAll(tempDir)
 
 	taskDirs, err := unzip(tempDir+"/"+fileName, tempDir)
 	if err != nil {
@@ -102,6 +109,7 @@ func uploadFile(w http.ResponseWriter, r *http.Request) {
 
 	sort.Strings(taskDirs)
 
+	// Build
 	for _, dir := range taskDirs {
 		response.Tasks = append(response.Tasks, Task{filepath.Base(dir), true, nil, nil})
 		output, err := build(dir)
@@ -112,11 +120,64 @@ func uploadFile(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Test
+	for index, dir := range taskDirs {
+		if response.Tasks[index].PassingBuild {
+			testResults, err := test(problemSetID, filepath.Base(dir), dir)
+			if err != nil {
+				response.Tasks[index].Errors = append(response.Tasks[index].Errors, Error{"Problem 404", err.Error()})
+			}
+			response.Tasks[index].Tests = testResults
+		}
+	}
+}
+
+func test(problemSet string, problem string, codeDir string) ([]TestResult, error) {
+	testDir := fmt.Sprintf("tests/%s/%s", problemSet, problem)
+
+	if _, err := os.Stat(testDir); os.IsNotExist(err) {
+		return nil, fmt.Errorf("Incorrect problem name: %s. Or redundant directory in zip archive", problem)
+	}
+
+	copyTests := exec.Command("bash", "-c", fmt.Sprintf("cp -r tests/%s/%s/* %s/", problemSet, problem, codeDir))
+	copyTests.Run()
+
+	runTests := exec.Command("bash", "-c", fmt.Sprintf("cd %s ; bash %s", codeDir, buildScriptName))
+	var stdout bytes.Buffer
+	runTests.Stdout = &stdout
+	err := runTests.Run()
+
+	suites, err := junit.Ingest(stdout.Bytes())
+	if err != nil {
+		return nil, fmt.Errorf(stdout.String())
+	}
+
+	testResults := make([]TestResult, 0)
+	for _, suite := range suites {
+		for _, test := range suite.Tests {
+			result := TestResult{test.Name, true, ""}
+			if test.Error != nil {
+				result.Passing = false
+				result.Err = test.Error.Error()
+			}
+			testResults = append(testResults, result)
+		}
+	}
+
+	return testResults, nil
 }
 
 func setupRoutes() {
-	http.HandleFunc("/upload", uploadFile)
-	http.ListenAndServe(":8080", nil)
+	router := mux.NewRouter()
+	router.HandleFunc("/problem/{problemset}", uploadFile)
+	srv := http.Server{
+		Handler:      router,
+		Addr:         "127.0.0.1:8080",
+		WriteTimeout: 15 * time.Second,
+		ReadTimeout:  30 * time.Second,
+	}
+
+	log.Fatal(srv.ListenAndServe())
 }
 
 func initWorkspace() error {

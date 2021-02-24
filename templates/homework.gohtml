@@ -8,35 +8,52 @@
     </li>
     {{end}}
 </ul>
+
 <h2>Tasks</h2>
 {{range .Tasks}}
 
-<h3>{{.Name}}</h3>
-
-{{if .PassingBuild}}
-<p>Build PASSING</p>
-{{else}}
-<p>Build failing</p>
-{{end}}
-
-<ul>
-    {{range .Errors}}
-    <li>
-        <h3>{{.Name}}</h3>
-        <p>{{escapeNewLineHTML .Details}}</p>
-    </li>
+    {{if .PassingBuild}}
+        <h3>Task {{.Name}} <img src="https://img.shields.io/badge/build-passing-brightgreen?style=for-the-badge" /></h3>
+    {{else}}
+        <h3>Task {{.Name}} <img src="https://img.shields.io/badge/build-failing-red?style=for-the-badge" /></h3>
     {{end}}
-</ul>
 
-<ul>
-    {{range .Tests}}
-        {{if .PassingBuild}}
-            <p>Test pass</p>
-        {{else}}
-            <p>Test fail</p>
+    {{if .Errors}}
+        <h3>Errors</h3>
+        <ul>
+            {{range .Errors}}
+            <li>
+                <h4>{{.Name}}</h4>
+                <p>{{escapeNewLineHTML .Details}}</p>
+            </li>
+            {{end}}
+        </ul>
+    {{end}}
+
+    {{if .Tests}}
+        <h3>Tests</h3>
+        {{range .Tests}}
+            {{if .Passing}}
+                <img src="https://img.shields.io/badge/-✔-brightgreen?style=for-the-badge" />
+            {{else}}
+                <img src="https://img.shields.io/badge/-✘-red?style=for-the-badge" />
+            {{end}}
         {{end}}
+
+        <ul>
+        {{range $i, $test := .Tests}}
+            {{if not $test.Passing}}
+                <li>
+                    <p>
+                        Test {{$i}}
+                        <br />
+                        {{escapeNewLineHTML $test.Err}}
+                    </p>
+                </li>
+            {{end}}
+        {{end}}
+        </ul>
     {{end}}
-</ul>
 
 
 {{end}}
