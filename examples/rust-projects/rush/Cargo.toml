@@ -1,0 +1,22 @@
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[package]
+name = "rush"
+version = "0.1.0"
+authors = ["luchev <luchevz@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+conch-parser = "0.1.1"
+lazy_static = "1.4.0"
+libc = "0.2.81"
+nix = "0.19.1"
+regex = "1.4.2"
+ringbuf = "0.2.2"
+rustyline = "7.1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_yaml = "0.8.15"
+signal-hook = "0.3.4"
+syn = "1.0.58"
+
+[dev-dependencies]
+pretty_assertions = "0.6.1"
