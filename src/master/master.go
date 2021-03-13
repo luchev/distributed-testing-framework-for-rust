@@ -38,6 +38,7 @@ func SetupRoutes(port int) {
 }
 
 func handleMasterTest(w http.ResponseWriter, r *http.Request) {
+	log.Printf("POST /test")
 	response := st.Response{PageTitle: "File name error", Tasks: nil, Errors: nil}
 
 	defer func() {
@@ -52,6 +53,8 @@ func handleMasterTest(w http.ResponseWriter, r *http.Request) {
 	tempDir, fileName, err := util.RetrieveFile(r, "codeZip")
 	if err != nil {
 		response.Errors = append(response.Errors, st.Error{Name: "Failed upload", Details: err.Error()})
+		log.Printf("Error uploading file %s[%dm%s%s[%dm: %s",
+			lg.Escape, lg.Underline, tempDir+"/"+fileName, lg.Escape, lg.Reset, err.Error())
 		return
 	}
 	response.PageTitle = fileName
@@ -62,6 +65,8 @@ func handleMasterTest(w http.ResponseWriter, r *http.Request) {
 	sourceFiles, err := util.Unzip(localArchiveFilePath, tempDir)
 	if err != nil {
 		response.Errors = append(response.Errors, st.Error{Name: "Failed extract", Details: err.Error()})
+		log.Printf("Error extracting %s[%dm%s%s[%dm: %s",
+			lg.Escape, lg.Underline, tempDir+"/"+fileName, lg.Escape, lg.Reset, err.Error())
 		return
 	}
 	testNames := util.GetTestNamesFromFiles(tempDir, sourceFiles)
@@ -72,6 +77,7 @@ func handleMasterTest(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		response.Tasks[0].PassingBuild = false
 		response.Tasks[0].Errors = append(response.Tasks[0].Errors, st.Error{Name: "Failed build", Details: stderr})
+		log.Printf("Build failed for %s[%dm%s%s[%dm", lg.Escape, lg.Underline, tempDir+"/"+fileName, lg.Escape, lg.Reset)
 		return
 	}
 
@@ -79,10 +85,12 @@ func handleMasterTest(w http.ResponseWriter, r *http.Request) {
 	// Run tests on master
 	if len(activeWorkers) == 0 {
 		response.Errors = append(response.Errors, st.Error{Name: "No active workers, falling back to using Master", Details: "Go to /add_node to add workers"})
-		log.Printf("Running tests for %s[%dm%s%s[%dm\n", lg.Escape, lg.Underline, tempDir, lg.Escape, lg.Reset)
+		log.Printf("Running tests for %s[%dm%s%s[%d on Master", lg.Escape, lg.Underline, tempDir, lg.Escape, lg.Reset)
 		response.Tasks[0].Tests = util.RunTests(testNames, tempDir)
 		return
 	}
+
+	log.Printf("Found %d workers online. Distributing tests between them", len(activeWorkers))
 
 	// Run tests on workers
 	var writeMutex sync.Mutex
@@ -91,7 +99,7 @@ func handleMasterTest(w http.ResponseWriter, r *http.Request) {
 		wg.Add(1)
 		go func(index int, chunk []string) {
 			worker := activeWorkers[index]
-			log.Printf("Running %s for %s[%dm%s%s[%dm on %s[%dm%s%s[%dm\n",
+			log.Printf("Running %s for %s[%dm%s%s[%dm on %s[%dm%s%s[%dm",
 				chunk, lg.Escape, lg.Underline, tempDir, lg.Escape, lg.Reset, lg.Escape, lg.Bold, worker, lg.Escape, lg.Reset)
 
 			results, err := util.RunTestsRemotely(chunk, localArchiveFilePath, worker)
@@ -99,6 +107,8 @@ func handleMasterTest(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				response.Tasks[0].Errors = append(response.Tasks[0].Errors,
 					st.Error{Name: fmt.Sprintf("Failed to run tests on %s", worker), Details: err.Error()})
+				log.Printf("Error running tests on %s[%dm%s%s[%dm: %s",
+					lg.Escape, lg.Underline, worker, lg.Escape, lg.Reset, err.Error())
 			} else {
 				response.Tasks[0].Tests = append(response.Tasks[0].Tests, results...)
 			}
@@ -110,16 +120,19 @@ func handleMasterTest(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleMasterIndex(w http.ResponseWriter, r *http.Request) {
+	log.Printf("GET /")
 	tmpl, _ := template.New("index.html").ParseFiles("templates/index.html")
 	tmpl.Execute(w, r)
 }
 
 func handleMasterAddNode(w http.ResponseWriter, r *http.Request) {
+	log.Printf("GET /add_node")
 	tmpl, _ := template.New("add_node.html").ParseFiles("templates/add_node.html")
 	tmpl.Execute(w, r)
 }
 
 func handleMasterAddNodeReceiver(w http.ResponseWriter, r *http.Request) {
+	log.Printf("POST /add_node_receiver")
 	defer func() {
 		tmpl, _ := template.New("status.html").
 			Funcs(template.FuncMap{"escapeNewLineHTML": util.EscapeNewLineHTML}).
@@ -134,6 +147,7 @@ func handleMasterAddNodeReceiver(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleMasterStatus(w http.ResponseWriter, r *http.Request) {
+	log.Printf("GET /status")
 	tmpl, _ := template.New("status.html").
 		Funcs(template.FuncMap{"escapeNewLineHTML": util.EscapeNewLineHTML}).
 		ParseFiles("templates/status.html")

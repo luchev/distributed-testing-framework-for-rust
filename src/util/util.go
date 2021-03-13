@@ -25,8 +25,9 @@ import (
 )
 
 func RetrieveFile(request *http.Request, fieldName string) (string, string, error) {
-	file, handle, err := request.FormFile(fieldName)
+	log.Printf("Starting file upload")
 
+	file, handle, err := request.FormFile(fieldName)
 	if err != nil {
 		return "", "", err
 	}
@@ -118,13 +119,15 @@ func Unzip(src string, dest string) ([]string, error) {
 }
 
 func GetTestNamesFromFiles(dir string, files []string) []string {
+	log.Printf("Looking for tests in %s[%dm%s%s[%dm", lg.Escape, lg.Underline, dir, lg.Escape, lg.Reset)
+
 	testNames := make([]string, 0)
-
 	re := regexp.MustCompile(`\n*\s*#\[test\][\w\W]*?fn (\w+)`)
-
 	for _, file := range files {
 		content, err := ioutil.ReadFile(path.Join(dir, file))
 		if err != nil {
+			log.Printf("Failed to read file: %s[%dm%s%s[%dm: %s",
+				lg.Escape, lg.Underline, file, lg.Escape, lg.Reset, err.Error())
 			continue
 		}
 
@@ -224,13 +227,16 @@ func InitWorkspace(uploadDir string) {
 
 func PingWorkers(workers map[string]struct{}) []st.WorkerStatus {
 	statuses := make([]st.WorkerStatus, 0)
-
+	log.Printf("Pinging workers")
 	for worker := range workers {
 		statuses = append(statuses, st.WorkerStatus{URL: worker, Err: "", Active: true})
 		_, err := http.Get(worker + "/ping")
 		if err != nil {
+			log.Printf(" > Worker %s: %s[%dmdead%s[%dm\n", worker, lg.Escape, lg.FgRed, lg.Escape, lg.Reset)
 			statuses[len(statuses)-1].Err = err.Error()
 			statuses[len(statuses)-1].Active = false
+		} else {
+			log.Printf(" > Worker %s: %s[%dmalive%s[%dm\n", worker, lg.Escape, lg.FgGreen, lg.Escape, lg.Reset)
 		}
 	}
 
@@ -269,7 +275,8 @@ func RunTests(names []string, srcDir string) (results []st.TestResult) {
 	for _, test := range names {
 		res, err := RunTest(srcDir, test)
 		if err != nil {
-			res = st.TestResult{Name: test, Passing: false, Err: "Failed to run test with err: " + err.Error()}
+			res = st.TestResult{Name: test, Passing: false, Err: fmt.Sprintf("Failed to run %s with err: %s", test, err.Error())}
+			log.Printf("Failed to run %s: %s", test, err.Error())
 		}
 		results = append(results, res)
 	}
@@ -280,7 +287,7 @@ func RunTestsRemotely(names []string, codeArchivePath string, worker string) (re
 	worker += "/test"
 	srcArchive, err := os.Open(codeArchivePath)
 	if err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
 	defer srcArchive.Close()
 
@@ -289,33 +296,33 @@ func RunTestsRemotely(names []string, codeArchivePath string, worker string) (re
 
 	testListWriter, err := writer.CreateFormField("testList")
 	if err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
 	io.WriteString(testListWriter, strings.Join(names, ","))
 
 	formFile, err := writer.CreateFormFile("codeZip", filepath.Base(srcArchive.Name()))
 	if err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
 
 	io.Copy(formFile, srcArchive)
 	writer.Close()
 	request, err := http.NewRequest("POST", worker, body)
 	if err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
 
 	request.Header.Add("Content-Type", writer.FormDataContentType())
 	client := &http.Client{}
 	response, err := client.Do(request)
 	if err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
 	defer response.Body.Close()
 
 	responseBody, err := ioutil.ReadAll(response.Body)
 	if err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
 	responseString := string(responseBody)
 
@@ -325,34 +332,8 @@ func RunTestsRemotely(names []string, codeArchivePath string, worker string) (re
 
 	err = json.Unmarshal(responseBody, &results)
 	if err != nil {
-		log.Fatal(err.Error())
+		return nil, err
 	}
 
 	return results, nil
 }
-
-// func runAllTests(codeDir string) ([]TestResult, error) {
-// 	runTests := exec.Command("bash", "-c", fmt.Sprintf("cd %s ; cargo junit", codeDir))
-// 	var stdout bytes.Buffer
-// 	runTests.Stdout = &stdout
-// 	err := runTests.Run()
-
-// 	suites, err := junit.Ingest(stdout.Bytes())
-// 	if err != nil {
-// 		return nil, fmt.Errorf(stdout.String())
-// 	}
-
-// 	testResults := make([]TestResult, 0)
-// 	for _, suite := range suites {
-// 		for _, test := range suite.Tests {
-// 			result := TestResult{test.Name, true, ""}
-// 			if test.Error != nil {
-// 				result.Passing = false
-// 				result.Err = test.Error.Error()
-// 			}
-// 			testResults = append(testResults, result)
-// 		}
-// 	}
-
-// 	return testResults, nil
-// }

@@ -16,7 +16,8 @@ import (
 )
 
 func SetupRoutes(port int) {
-	log.Printf("Initializing Worker server routes on port %d", port)
+	log.Printf("Initializing Worker server routes")
+	log.Printf("Worker service started on http://127.0.0.1:%d", port)
 
 	router := mux.NewRouter()
 	router.HandleFunc("/test", handleWorkerTest)
@@ -32,6 +33,8 @@ func SetupRoutes(port int) {
 }
 
 func handleWorkerTest(w http.ResponseWriter, r *http.Request) {
+	log.Printf("POST /test")
+
 	result := ""
 	defer func() {
 		io.WriteString(w, result)
@@ -42,6 +45,8 @@ func handleWorkerTest(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		result = err.Error()
+		log.Printf("Error uploading file %s[%dm%s%s[%dm: %s",
+			lg.Escape, lg.Underline, tempDir+"/"+fileName, lg.Escape, lg.Reset, err.Error())
 		return
 	}
 	defer os.RemoveAll(tempDir)
@@ -52,6 +57,8 @@ func handleWorkerTest(w http.ResponseWriter, r *http.Request) {
 	_, err = util.Unzip(localArchiveFilePath, tempDir)
 	if err != nil {
 		result = "Failed extract: " + err.Error()
+		log.Printf("Error extracting file %s[%dm%s%s[%dm: %s",
+			lg.Escape, lg.Underline, tempDir+"/"+fileName, lg.Escape, lg.Reset, err.Error())
 		return
 	}
 
@@ -61,13 +68,16 @@ func handleWorkerTest(w http.ResponseWriter, r *http.Request) {
 
 	encoded, err := json.Marshal(results)
 	if err != nil {
-		result = "Failed extract: " + err.Error()
+		result = "Failed to run tests: " + err.Error()
+		log.Printf("Failed to run tests for %s[%dm%s%s[%dm: %s",
+			lg.Escape, lg.Underline, tempDir+"/"+fileName, lg.Escape, lg.Reset, err.Error())
 		return
 	}
 	w.Write(encoded)
 }
 
 func handleWorkerPing(w http.ResponseWriter, r *http.Request) {
-	log.Println("Ping")
+	log.Printf("GET /ping")
+
 	io.WriteString(w, "OK")
 }
