@@ -12,6 +12,7 @@ import (
 
 	"github.com/gorilla/mux"
 	lg "github.com/luchev/dtf/logging"
+	"github.com/luchev/dtf/structs/test"
 	"github.com/luchev/dtf/util"
 )
 
@@ -64,7 +65,7 @@ func handleWorkerTest(w http.ResponseWriter, r *http.Request) {
 
 	// Test
 	log.Printf("Running tests for %s[%dm%s%s[%dm\n", lg.Escape, lg.Underline, tempDir, lg.Escape, lg.Reset)
-	results := util.RunTests(testNames, tempDir)
+	results := test.RunTests(testNames, tempDir)
 
 	encoded, err := json.Marshal(results)
 	if err != nil {

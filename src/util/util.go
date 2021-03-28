@@ -3,14 +3,11 @@ package util
 import (
 	"archive/zip"
 	"bytes"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"log"
 	"math"
-	"mime/multipart"
 	"net/http"
 	"os"
 	"os/exec"
@@ -19,9 +16,8 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/joshdk/go-junit"
 	lg "github.com/luchev/dtf/logging"
-	st "github.com/luchev/dtf/structs"
+	"gopkg.in/yaml.v2"
 )
 
 func RetrieveFile(request *http.Request, fieldName string) (string, string, error) {
@@ -58,14 +54,31 @@ func RetrieveFile(request *http.Request, fieldName string) (string, string, erro
 	return tempDir, fileName, nil
 }
 
+func RetrieveLocalFile(path string) (string, string, error) {
+	input, err := ioutil.ReadFile(path)
+	if err != nil {
+		return "", "", err
+	}
+
+	tempDir, err := ioutil.TempDir("uploads", "")
+	if err != nil {
+		return "", "", err
+	}
+
+	fileName := filepath.Base(path)
+	err = ioutil.WriteFile(tempDir+"/"+fileName, input, os.ModePerm)
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	return tempDir, fileName, nil
+}
+
 func EscapeNewLineHTML(input string) string {
 	return strings.Replace(input, "\n", "<br>", -1)
 }
 
 func Unzip(src string, dest string) ([]string, error) {
-	log.Printf("Unzipping %s[%dm%s%s[%dm inside %s[%dm%s%s[%dm\n",
-		lg.Escape, lg.Underline, src, lg.Escape, lg.Reset, lg.Escape, lg.Underline, dest, lg.Escape, lg.Reset)
-
 	reader, err := zip.OpenReader(src)
 	if err != nil {
 		fmt.Println(err)
@@ -81,7 +94,6 @@ func Unzip(src string, dest string) ([]string, error) {
 			return sourceFiles, fmt.Errorf("%s: illegal file path", fpath)
 		}
 		if file.FileInfo().IsDir() {
-			log.Printf(" > Creating directory %s[%dm%s%s[%dm\n", lg.Escape, lg.Underline, dest+"/"+file.Name, lg.Escape, lg.Reset)
 			os.MkdirAll(fpath, os.ModePerm)
 			continue
 		}
@@ -90,7 +102,6 @@ func Unzip(src string, dest string) ([]string, error) {
 			return sourceFiles, err
 		}
 
-		log.Printf(" > Creating file %s[%dm%s%s[%dm\n", lg.Escape, lg.Underline, dest+"/"+file.Name, lg.Escape, lg.Reset)
 		outFile, err := os.OpenFile(fpath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, file.Mode())
 		if err != nil {
 			return sourceFiles, err
@@ -140,38 +151,21 @@ func GetTestNamesFromFiles(dir string, files []string) []string {
 	return testNames
 }
 
-func RunTest(srcDir string, testName string) (st.TestResult, error) {
-	log.Printf("Running test %s[%dm%s%s[%dm > %s[%dm%s%s[%dm\n",
-		lg.Escape, lg.Underline, srcDir, lg.Escape, lg.Reset, lg.Escape, lg.Bold, testName, lg.Escape, lg.Reset)
-
-	runTests := exec.Command("bash", "-c", fmt.Sprintf("cd %s ; cargo junit --test-name %s", srcDir, testName))
+func ExecuteScript(path string) (string, error) {
+	base := filepath.Base(path)
+	dir := filepath.Dir(path)
+	cmd := exec.Command("bash", "-c", fmt.Sprintf("cd %s; ./%s", dir, base))
 	var stdout bytes.Buffer
-	runTests.Stdout = &stdout
-	err := runTests.Run()
+	cmd.Stdout = &stdout
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
 
-	suites, err := junit.Ingest(stdout.Bytes())
+	err := cmd.Run()
 	if err != nil {
-		return st.TestResult{}, fmt.Errorf(stdout.String())
+		return stderr.String(), err
+	} else {
+		return stdout.String(), nil
 	}
-
-	// Should have exactly 1 test
-	for _, suite := range suites {
-		for _, test := range suite.Tests {
-			result := st.TestResult{Name: test.Name, Passing: true, Err: ""}
-			if test.Error != nil {
-				result.Passing = false
-				result.Err = test.Error.Error()
-				log.Printf(" > %s[%dmFailure%s[%dm\n", lg.Escape, lg.FgRed, lg.Escape, lg.Reset)
-			} else {
-				log.Printf(" > %s[%dmSuccess%s[%dm\n", lg.Escape, lg.FgGreen, lg.Escape, lg.Reset)
-			}
-
-			return result, nil
-		}
-	}
-
-	return st.TestResult{}, errors.New("Unexpected junit output")
-
 }
 
 func Build(srcDir string) (string, error) {
@@ -194,10 +188,7 @@ func Build(srcDir string) (string, error) {
 }
 
 func InitWorkspace(uploadDir string) {
-	log.Println("Initializing workspace")
-
 	if _, err := os.Stat(uploadDir); os.IsNotExist(err) {
-		log.Printf(" > Creating %s[%dmuploads%s[%dm\n", lg.Escape, lg.Underline, lg.Escape, lg.Reset)
 		err := os.Mkdir(uploadDir, os.ModePerm)
 		if err != nil {
 			log.Fatal(err)
@@ -216,31 +207,12 @@ func InitWorkspace(uploadDir string) {
 		log.Fatal(err)
 	}
 
-	log.Printf(" > Cleaning %s[%dmuploads%s[%dm\n", lg.Escape, lg.Underline, lg.Escape, lg.Reset)
 	for _, fileName := range files {
 		err = os.RemoveAll(filepath.Join(uploadDir, fileName))
 		if err != nil {
 			log.Fatal(err)
 		}
 	}
-}
-
-func PingWorkers(workers map[string]struct{}) []st.WorkerStatus {
-	statuses := make([]st.WorkerStatus, 0)
-	log.Printf("Pinging workers")
-	for worker := range workers {
-		statuses = append(statuses, st.WorkerStatus{URL: worker, Err: "", Active: true})
-		_, err := http.Get(worker + "/ping")
-		if err != nil {
-			log.Printf(" > Worker %s: %s[%dmdead%s[%dm\n", worker, lg.Escape, lg.FgRed, lg.Escape, lg.Reset)
-			statuses[len(statuses)-1].Err = err.Error()
-			statuses[len(statuses)-1].Active = false
-		} else {
-			log.Printf(" > Worker %s: %s[%dmalive%s[%dm\n", worker, lg.Escape, lg.FgGreen, lg.Escape, lg.Reset)
-		}
-	}
-
-	return statuses
 }
 
 func SplitChunks(items []string, parts int) [][]string {
@@ -261,79 +233,20 @@ func SplitChunks(items []string, parts int) [][]string {
 	return chunks
 }
 
-func GetActiveWorkers(workers map[string]struct{}) []string {
-	activeWorkers := make([]string, 0)
-	for _, worker := range PingWorkers(workers) {
-		if worker.Active {
-			activeWorkers = append(activeWorkers, worker.URL)
-		}
-	}
-	return activeWorkers
-}
-
-func RunTests(names []string, srcDir string) (results []st.TestResult) {
-	for _, test := range names {
-		res, err := RunTest(srcDir, test)
-		if err != nil {
-			res = st.TestResult{Name: test, Passing: false, Err: fmt.Sprintf("Failed to run %s with err: %s", test, err.Error())}
-			log.Printf("Failed to run %s: %s", test, err.Error())
-		}
-		results = append(results, res)
-	}
-	return results
-}
-
-func RunTestsRemotely(names []string, codeArchivePath string, worker string) (results []st.TestResult, err error) {
-	worker += "/test"
-	srcArchive, err := os.Open(codeArchivePath)
+func UnmarshalYamlFile(path string, out interface{}) error {
+	file, err := os.Open(path)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	defer srcArchive.Close()
-
-	body := &bytes.Buffer{}
-	writer := multipart.NewWriter(body)
-
-	testListWriter, err := writer.CreateFormField("testList")
+	bytes, err := io.ReadAll(file)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	io.WriteString(testListWriter, strings.Join(names, ","))
 
-	formFile, err := writer.CreateFormFile("codeZip", filepath.Base(srcArchive.Name()))
+	err = yaml.Unmarshal(bytes, out)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	io.Copy(formFile, srcArchive)
-	writer.Close()
-	request, err := http.NewRequest("POST", worker, body)
-	if err != nil {
-		return nil, err
-	}
-
-	request.Header.Add("Content-Type", writer.FormDataContentType())
-	client := &http.Client{}
-	response, err := client.Do(request)
-	if err != nil {
-		return nil, err
-	}
-	defer response.Body.Close()
-
-	responseBody, err := ioutil.ReadAll(response.Body)
-	if err != nil {
-		return nil, err
-	}
-	responseString := string(responseBody)
-
-	if response.StatusCode == http.StatusBadRequest {
-		return nil, errors.New(responseString)
-	}
-
-	err = json.Unmarshal(responseBody, &results)
-	if err != nil {
-		return nil, err
-	}
-
-	return results, nil
+	return nil
 }

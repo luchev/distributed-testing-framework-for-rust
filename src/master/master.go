@@ -11,11 +11,15 @@ import (
 
 	"github.com/gorilla/mux"
 	lg "github.com/luchev/dtf/logging"
-	st "github.com/luchev/dtf/structs"
+	"github.com/luchev/dtf/structs/error"
+	"github.com/luchev/dtf/structs/response"
+	"github.com/luchev/dtf/structs/task"
+	"github.com/luchev/dtf/structs/test"
+	"github.com/luchev/dtf/structs/workerstatus"
 	"github.com/luchev/dtf/util"
 )
 
-var workers = make(map[string]struct{}, 0)
+var workers = make(map[string]struct{})
 
 func SetupRoutes(port int) {
 	log.Printf("Initializing Master server routes")
@@ -39,7 +43,7 @@ func SetupRoutes(port int) {
 
 func handleMasterTest(w http.ResponseWriter, r *http.Request) {
 	log.Printf("POST /test")
-	response := st.Response{PageTitle: "File name error", Tasks: nil, Errors: nil}
+	response := response.Response{PageTitle: "File name error", Tasks: nil, Errors: nil}
 
 	defer func() {
 		tmpl, _ := template.New("result.html").
@@ -52,7 +56,7 @@ func handleMasterTest(w http.ResponseWriter, r *http.Request) {
 	r.ParseMultipartForm(10 << 20) // 10 MB files
 	tempDir, fileName, err := util.RetrieveFile(r, "codeZip")
 	if err != nil {
-		response.Errors = append(response.Errors, st.Error{Name: "Failed upload", Details: err.Error()})
+		response.Errors = append(response.Errors, error.Error{Name: "Failed upload", Details: err.Error()})
 		log.Printf("Error uploading file %s[%dm%s%s[%dm: %s",
 			lg.Escape, lg.Underline, tempDir+"/"+fileName, lg.Escape, lg.Reset, err.Error())
 		return
@@ -64,7 +68,7 @@ func handleMasterTest(w http.ResponseWriter, r *http.Request) {
 	localArchiveFilePath := tempDir + "/" + fileName
 	sourceFiles, err := util.Unzip(localArchiveFilePath, tempDir)
 	if err != nil {
-		response.Errors = append(response.Errors, st.Error{Name: "Failed extract", Details: err.Error()})
+		response.Errors = append(response.Errors, error.Error{Name: "Failed extract", Details: err.Error()})
 		log.Printf("Error extracting %s[%dm%s%s[%dm: %s",
 			lg.Escape, lg.Underline, tempDir+"/"+fileName, lg.Escape, lg.Reset, err.Error())
 		return
@@ -73,20 +77,20 @@ func handleMasterTest(w http.ResponseWriter, r *http.Request) {
 
 	// Build
 	stderr, err := util.Build(tempDir)
-	response.Tasks = append(response.Tasks, st.Task{Name: fileName, PassingBuild: true, BuildMessage: stderr, Errors: nil, Tests: nil})
+	response.Tasks = append(response.Tasks, task.TaskResult{Name: fileName, PassingBuild: true, BuildMessage: stderr, Errors: nil, Tests: nil})
 	if err != nil {
 		response.Tasks[0].PassingBuild = false
-		response.Tasks[0].Errors = append(response.Tasks[0].Errors, st.Error{Name: "Failed build", Details: stderr})
+		response.Tasks[0].Errors = append(response.Tasks[0].Errors, error.Error{Name: "Failed build", Details: stderr})
 		log.Printf("Build failed for %s[%dm%s%s[%dm", lg.Escape, lg.Underline, tempDir+"/"+fileName, lg.Escape, lg.Reset)
 		return
 	}
 
-	activeWorkers := util.GetActiveWorkers(workers)
+	activeWorkers := workerstatus.GetActiveWorkers(workers)
 	// Run tests on master
 	if len(activeWorkers) == 0 {
-		response.Errors = append(response.Errors, st.Error{Name: "No active workers, falling back to using Master", Details: "Go to /add_node to add workers"})
+		response.Errors = append(response.Errors, error.Error{Name: "No active workers, falling back to using Master", Details: "Go to /add_node to add workers"})
 		log.Printf("Running tests for %s[%dm%s%s[%d on Master", lg.Escape, lg.Underline, tempDir, lg.Escape, lg.Reset)
-		response.Tasks[0].Tests = util.RunTests(testNames, tempDir)
+		response.Tasks[0].Tests = test.RunTests(testNames, tempDir)
 		return
 	}
 
@@ -102,11 +106,11 @@ func handleMasterTest(w http.ResponseWriter, r *http.Request) {
 			log.Printf("Running %s for %s[%dm%s%s[%dm on %s[%dm%s%s[%dm",
 				chunk, lg.Escape, lg.Underline, tempDir, lg.Escape, lg.Reset, lg.Escape, lg.Bold, worker, lg.Escape, lg.Reset)
 
-			results, err := util.RunTestsRemotely(chunk, localArchiveFilePath, worker)
+			results, err := test.RunTestsRemotely(chunk, localArchiveFilePath, worker)
 			writeMutex.Lock()
 			if err != nil {
 				response.Tasks[0].Errors = append(response.Tasks[0].Errors,
-					st.Error{Name: fmt.Sprintf("Failed to run tests on %s", worker), Details: err.Error()})
+					error.Error{Name: fmt.Sprintf("Failed to run tests on %s", worker), Details: err.Error()})
 				log.Printf("Error running tests on %s[%dm%s%s[%dm: %s",
 					lg.Escape, lg.Underline, worker, lg.Escape, lg.Reset, err.Error())
 			} else {
@@ -137,7 +141,7 @@ func handleMasterAddNodeReceiver(w http.ResponseWriter, r *http.Request) {
 		tmpl, _ := template.New("status.html").
 			Funcs(template.FuncMap{"escapeNewLineHTML": util.EscapeNewLineHTML}).
 			ParseFiles("templates/status.html")
-		tmpl.Execute(w, util.PingWorkers(workers))
+		tmpl.Execute(w, workerstatus.PingWorkers(workers))
 	}()
 
 	r.ParseForm()
@@ -151,5 +155,5 @@ func handleMasterStatus(w http.ResponseWriter, r *http.Request) {
 	tmpl, _ := template.New("status.html").
 		Funcs(template.FuncMap{"escapeNewLineHTML": util.EscapeNewLineHTML}).
 		ParseFiles("templates/status.html")
-	tmpl.Execute(w, util.PingWorkers(workers))
+	tmpl.Execute(w, workerstatus.PingWorkers(workers))
 }
